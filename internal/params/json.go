@@ -1,7 +1,8 @@
 package params
 
 import (
-	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,15 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
+const (
+	// configEnvVar is the name of the environment variable containing the DDNS
+	// settings as a JSON document.
+	configEnvVar = "CONFIG"
+	// emptyDocument is the JSON document created when the settings file is
+	// missing and the environment variable is unset.
+	emptyDocument = "{}"
+)
+
 type commonSettings struct {
 	Provider string `json:"provider"`
 	Domain   string `json:"domain"`
@@ -32,77 +42,142 @@ type commonSettings struct {
 	ProviderIP *bool `json:"provider_ip,omitempty"`
 }
 
-// JSONProviders obtain the update settings from the JSON content,
-// first trying from the environment variable CONFIG and then from
-// the file config.json.
+// JSONProviders obtain the update settings from the JSON content.
+// The file config.json is the source of truth, unless the environment variable
+// CONFIG is set and differs from what was last synchronized to the file. In that
+// latter case the environment variable wins and is written to the file, so that
+// settings edited through the web UI are not clobbered on restart when the
+// environment variable did not change.
 func (r *Reader) JSONProviders(filePath string) (
 	providers []provider.Provider, warnings []string, err error,
 ) {
-	providers, warnings, err = r.getProvidersFromEnv(filePath)
-	if providers != nil || warnings != nil || err != nil {
-		return providers, warnings, err
+	rawBytes, fromEnv, err := r.resolveRawSettings(filePath)
+	if err != nil {
+		return nil, nil, err
 	}
-	return r.getProvidersFromFile(filePath)
+
+	providers, warnings, err = extractAllSettings(rawBytes)
+	if err != nil && fromEnv {
+		err = fmt.Errorf("configuration given: %w", err)
+	}
+
+	return providers, warnings, err
 }
 
 var errWriteConfigToFile = errors.New("cannot write configuration to file")
 
-// getProvidersFromFile obtain the update settings from config.json.
-func (r *Reader) getProvidersFromFile(filePath string) (
-	providers []provider.Provider, warnings []string, err error,
-) {
-	r.logger.Info("reading JSON config from file " + filePath)
-	bytes, err := r.readFile(filePath)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return nil, nil, err
-		}
-
-		r.logger.Info("file not found, creating an empty settings file")
-
-		const filePerm = fs.FileMode(0o666)
-		err = r.writeFile(filePath, []byte(`{}`), filePerm)
-		if err != nil {
-			err = fmt.Errorf("%w: %w", errWriteConfigToFile, err)
-		}
-		return nil, nil, err
-	}
-	r.logger.Debug("config read: " + string(bytes))
-
-	return extractAllSettings(bytes)
+// resolveRawSettings returns the raw JSON bytes to use to build the providers
+// from, reading the environment variable CONFIG value to use. It also returns
+// whether these bytes come from the environment variable.
+func (r *Reader) resolveRawSettings(filePath string) (rawBytes []byte, fromEnv bool, err error) {
+	return r.resolveRawSettingsFrom(filePath, os.Getenv(configEnvVar))
 }
 
-// getProvidersFromEnv obtain the update settings from the environment variable CONFIG.
-// If the settings are valid, they are written to the filePath.
-func (r *Reader) getProvidersFromEnv(filePath string) (
-	providers []provider.Provider, warnings []string, err error,
+// resolveRawSettingsFrom returns the raw JSON bytes to use to build the
+// providers from, using the given environment variable CONFIG value.
+// The file is only overwritten when the environment variable is set and cannot
+// be proven to be unchanged since it was last written to the file.
+func (r *Reader) resolveRawSettingsFrom(filePath, envValue string) (
+	rawBytes []byte, fromEnv bool, err error,
 ) {
-	s := os.Getenv("CONFIG")
-	if s == "" {
-		return nil, nil, nil
-	}
-	r.logger.Info("reading JSON config from environment variable CONFIG")
-	r.logger.Debug("config read: " + s)
-
-	b := []byte(s)
-
-	providers, warnings, err = extractAllSettings(b)
-	if err != nil {
-		return providers, warnings, fmt.Errorf("configuration given: %w", err)
+	seed := envSeedOf(envValue)
+	rawBytes, readErr := r.readFile(filePath)
+	fileMissing := errors.Is(readErr, os.ErrNotExist)
+	if readErr != nil && !fileMissing {
+		return nil, false, readErr
 	}
 
-	buffer := bytes.NewBuffer(nil)
-	err = json.Indent(buffer, b, "", "  ")
-	if err != nil {
-		return providers, warnings, fmt.Errorf("%w: %w", errWriteConfigToFile, err)
+	if envValue == "" {
+		// The environment variable is unset, so the file is the source of truth.
+		if fileMissing {
+			r.logger.Info("file not found, creating an empty settings file")
+
+			const filePerm = fs.FileMode(0o666)
+			err = r.writeFile(filePath, []byte(emptyDocument), filePerm)
+			if err != nil {
+				return nil, false, fmt.Errorf("%w: %w", errWriteConfigToFile, err)
+			}
+
+			return []byte(emptyDocument), false, nil
+		}
+
+		r.logger.Info("reading JSON config from file " + filePath)
+		r.logger.Debug("config read: " + string(rawBytes))
+
+		return rawBytes, false, nil
 	}
+
+	if !fileMissing && r.envSeedMatches(rawBytes, seed) {
+		// The environment variable did not change since it was last synchronized
+		// to the file, so the file, possibly edited through the web UI, wins.
+		r.logger.Info(configEnvVar + " environment variable unchanged, using config file " + filePath)
+		r.logger.Debug("config read: " + string(rawBytes))
+
+		return rawBytes, false, nil
+	}
+
+	// Either the seed is missing because the file predates this feature, or the
+	// environment variable changed, so the environment variable wins.
+	r.logger.Info("reading JSON config from environment variable " + configEnvVar)
+	r.logger.Debug("config read: " + envValue)
+
+	envBytes, envErr := documentFromEnv(envValue, seed)
+	if envErr != nil {
+		// The environment variable cannot be parsed as a JSON document, so the
+		// regular parsing path reports the error and the file is left untouched.
+		return []byte(envValue), true, nil
+	}
+
 	const filePerm = fs.FileMode(0o666)
-	err = r.writeFile(filePath, buffer.Bytes(), filePerm)
+	err = r.writeFile(filePath, envBytes, filePerm)
 	if err != nil {
-		return providers, warnings, fmt.Errorf("%w: %w", errWriteConfigToFile, err)
+		return nil, false, fmt.Errorf("%w: %w", errWriteConfigToFile, err)
 	}
 
-	return providers, warnings, nil
+	return envBytes, true, nil
+}
+
+// envSeedMatches returns true if the file at the given raw bytes content was
+// last synchronized from an environment variable having the given seed.
+func (r *Reader) envSeedMatches(rawBytes []byte, seed string) bool {
+	doc, _, err := parseDocument(rawBytes)
+	if err != nil { // a malformed document has no seed
+		return false
+	}
+
+	return doc.EnvSeed != "" && doc.EnvSeed == seed
+}
+
+// documentFromEnv builds the JSON document to write to the settings file from
+// the environment variable value, stamping it with the given seed.
+func documentFromEnv(envValue, seed string) (data []byte, err error) {
+	doc, extra, err := parseDocument([]byte(envValue))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errUnmarshalRaw, err)
+	}
+
+	doc.EnvSeed = seed
+
+	return marshalDocument(extra, doc)
+}
+
+// EnvSeedOf returns the hex SHA-256 seed of the given environment variable
+// value, which is stored in the settings file when it is synchronized from the
+// environment variable. It returns an empty string for an empty value.
+// It allows callers to report whether the running configuration comes from
+// the environment variable or from the config file.
+func EnvSeedOf(value string) string {
+	return envSeedOf(value)
+}
+
+func envSeedOf(value string) string {
+	if value == "" {
+		return ""
+	}
+
+	sum := sha256.Sum256([]byte(value))
+
+	return hex.EncodeToString(sum[:])
 }
 
 var (

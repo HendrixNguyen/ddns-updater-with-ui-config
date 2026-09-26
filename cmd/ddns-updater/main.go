@@ -17,12 +17,11 @@ import (
 	"github.com/qdm12/ddns-updater/internal/data"
 	"github.com/qdm12/ddns-updater/internal/health"
 	"github.com/qdm12/ddns-updater/internal/healthchecksio"
+	"github.com/qdm12/ddns-updater/internal/manager"
 	"github.com/qdm12/ddns-updater/internal/models"
 	"github.com/qdm12/ddns-updater/internal/noop"
-	jsonparams "github.com/qdm12/ddns-updater/internal/params"
+	"github.com/qdm12/ddns-updater/internal/params"
 	persistence "github.com/qdm12/ddns-updater/internal/persistence/json"
-	"github.com/qdm12/ddns-updater/internal/provider"
-	recordslib "github.com/qdm12/ddns-updater/internal/records"
 	"github.com/qdm12/ddns-updater/internal/resolver"
 	"github.com/qdm12/ddns-updater/internal/server"
 	"github.com/qdm12/ddns-updater/internal/shoutrrr"
@@ -151,8 +150,8 @@ func _main(ctx context.Context, reader *reader.Reader, args []string, logger log
 		return err
 	}
 
-	jsonReader := jsonparams.NewReader(logger)
-	providers, warnings, err := jsonReader.JSONProviders(*config.Paths.Config)
+	store := params.NewStore(logger, *config.Paths.Config)
+	providers, warnings, err := manager.Providers(store)
 	for _, w := range warnings {
 		logger.Warn(w)
 		shoutrrrClient.Notify(w)
@@ -172,12 +171,15 @@ func _main(ctx context.Context, reader *reader.Reader, args []string, logger log
 		logger.Warn(err.Error())
 	}
 
-	records, err := readRecords(providers, persistentDB, logger, shoutrrrClient)
+	records, err := manager.BuildRecords(providers, persistentDB)
 	if err != nil {
 		return fmt.Errorf("reading records: %w", err)
 	}
 
 	db := data.NewDatabase(records, persistentDB)
+
+	settingsManager := manager.New(store, persistentDB, logger, shoutrrrClient)
+	settingsManager.AttachDatabase(db)
 
 	httpSettings := publicip.HTTPSettings{
 		Enabled: *config.PubIP.HTTPEnabled,
@@ -217,7 +219,7 @@ func _main(ctx context.Context, reader *reader.Reader, args []string, logger log
 		return fmt.Errorf("creating health server: %w", err)
 	}
 
-	server, err := createServer(ctx, config.Server, logger, db, updaterService)
+	server, err := createServer(ctx, config.Server, logger, db, settingsManager, updaterService)
 	if err != nil {
 		return fmt.Errorf("creating server: %w", err)
 	}
@@ -322,26 +324,6 @@ func logProvidersCount(providersCount int, logger log.LeveledLogger) {
 	}
 }
 
-func readRecords(providers []provider.Provider, persistentDB *persistence.Database,
-	logger log.LoggerInterface, shoutrrrClient *shoutrrr.Client) (
-	records []recordslib.Record, err error,
-) {
-	records = make([]recordslib.Record, len(providers))
-	for i, provider := range providers {
-		logger.Info("Reading history from database: domain " +
-			provider.Domain() + " owner " + provider.Owner() +
-			" " + provider.IPVersion().String())
-		events, err := persistentDB.GetEvents(provider.Domain(),
-			provider.Owner(), provider.IPVersion())
-		if err != nil {
-			shoutrrrClient.Notify(err.Error())
-			return nil, err
-		}
-		records[i] = recordslib.New(provider, events)
-	}
-	return records, nil
-}
-
 func exitHealthchecksio(hioClient *healthchecksio.Client,
 	logger log.LoggerInterface, state healthchecksio.State,
 ) {
@@ -369,7 +351,7 @@ func createHealthServer(db health.AllSelecter, resolver health.LookupIPer,
 
 //nolint:ireturn
 func createServer(ctx context.Context, config config.Server,
-	logger log.LoggerInterface, db server.Database,
+	logger log.LoggerInterface, db server.Database, settings server.SettingsManager,
 	updaterService server.UpdateForcer) (
 	service goservices.Service, err error,
 ) {
@@ -378,5 +360,5 @@ func createServer(ctx context.Context, config config.Server,
 	}
 	serverLogger := logger.New(log.SetComponent("http server"))
 	return server.New(ctx, config.ListeningAddress, config.RootURL,
-		db, serverLogger, updaterService)
+		db, settings, serverLogger, updaterService)
 }

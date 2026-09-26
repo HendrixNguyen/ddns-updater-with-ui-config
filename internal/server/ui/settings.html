@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+  <meta charset="utf-8">
+  <title>Settings - DDNS Updater</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
+  <meta name="description" content="Manage the DDNS records, domains and provider credentials.">
+  <link rel="icon" href="static/favicon.svg" sizes="any" type="image/svg+xml">
+  <link rel="icon" href="static/favicon.ico" type="image/x-icon">
+
+  <!-- Theme resolution runs before the first paint so the page never flashes
+       the wrong palette. The class is toggled on <html>, matching
+       `darkMode: 'class'` below and `:root.light` in styles.css. -->
+  <script>
+    (function () {
+      var stored = null;
+      try { stored = window.localStorage.getItem('ddns-theme'); } catch (e) { stored = null; }
+      var prefersLight = window.matchMedia
+        && window.matchMedia('(prefers-color-scheme: light)').matches;
+      var isDark = stored === null || stored === '' ? !prefersLight : stored === 'dark';
+      document.documentElement.classList.toggle('dark', isDark);
+      document.documentElement.classList.toggle('light', !isDark);
+    })();
+  </script>
+
+  <!-- Tailwind (Play CDN v3) is the rich layer. static/styles.css, loaded
+       right after it, is the self sufficient offline baseline for the exact
+       same design, so the page degrades gracefully with no CDN access. -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            accent: {
+              DEFAULT: '#6366f1',
+              hover: '#4f46e5',
+              soft: 'rgba(99, 102, 241, 0.16)',
+            },
+            surface: {
+              DEFAULT: '#101014',
+              raised: '#17171c',
+              inset: '#0c0c0f',
+              page: '#09090b',
+            },
+            line: 'rgba(255, 255, 255, 0.09)',
+            ok: { DEFAULT: '#10b981', text: '#34d399' },
+            live: { DEFAULT: '#38bdf8', text: '#7dd3fc' },
+            busy: { DEFAULT: '#f59e0b', text: '#fbbf24' },
+            bad: { DEFAULT: '#f43f5e', text: '#fb7185' },
+          },
+          fontFamily: {
+            sans: ['system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto',
+              'Oxygen', 'Ubuntu', 'Cantarell', 'Open Sans', 'Helvetica Neue', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'SF Mono', 'Menlo', 'Consolas',
+              'Liberation Mono', 'monospace'],
+          },
+          borderRadius: { xl: '0.875rem' },
+          maxWidth: { '7xl': '80rem' },
+        },
+      },
+    };
+  </script>
+
+  <!-- The server emits a JSON string literal with the characters which could
+       close this element already escaped, so it is parsed as JSON rather than
+       concatenated into a JavaScript string literal. -->
+  <script id="ddns-base" type="application/json">{{.BasePath}}</script>
+  <script>
+    window.__DDNS_BASE__ = (function () {
+      var node = document.getElementById('ddns-base');
+      if (!node) { return ''; }
+      try { return JSON.parse(node.textContent || '""') || ''; } catch (e) { return ''; }
+    })();
+  </script>
+
+  <link rel="stylesheet" href="static/styles.css" type="text/css" id="ddns-styles">
+</head>
+
+<body class="settings-page" data-record-count="{{.RecordCount}}">
+  <!-- Mount point of the configuration manager. Every piece of content is
+       built with the DOM API from the JSON API, never from an HTML string. -->
+  <div id="app"></div>
+  <noscript>
+    <p class="noscript">
+      JavaScript is required to manage the DDNS settings.
+      Please enable it in your browser, or edit the settings file directly.
+    </p>
+  </noscript>
+  <script src="static/app.js" defer></script>
+</body>
+
+</html>

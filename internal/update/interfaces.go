@@ -20,7 +20,7 @@ type UpdaterInterface interface {
 
 type Database interface {
 	Select(recordID uint) (record records.Record, err error)
-	SelectAll() (records []records.Record)
+	SelectAll() (all []records.Record)
 	Update(recordID uint, record records.Record) (err error)
 }
 

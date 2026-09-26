@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/qdm12/ddns-updater/internal/constants"
+	"github.com/qdm12/ddns-updater/internal/data"
 	"github.com/qdm12/ddns-updater/internal/healthchecksio"
 	"github.com/qdm12/ddns-updater/internal/models"
 	librecords "github.com/qdm12/ddns-updater/internal/records"
@@ -311,6 +312,12 @@ func setInitialPublicIPFailStatus(db Database, id uint, now time.Time) error {
 }
 
 func (s *Service) updateNecessary(ctx context.Context) (errors []error) {
+	// SelectAll returns a snapshot copy of the records, so the indices used
+	// as record IDs further down always refer to the record they were
+	// computed from, even if the database is reloaded concurrently. A reload
+	// in the middle of a cycle is detected by the database itself, which
+	// rejects stale writes with data.ErrRecordChanged, and out of range IDs
+	// are reported as data.ErrRecordNotFound rather than panicking.
 	records := s.db.SelectAll()
 	doIP, doIPv4, doIPv6 := doIPVersion(records)
 	s.logger.Debug(fmt.Sprintf("configured to fetch IP: v4 or v6: %t, v4: %t, v6: %t", doIP, doIPv4, doIPv6))
@@ -342,8 +349,7 @@ func (s *Service) updateNecessary(ctx context.Context) (errors []error) {
 			err := setInitialPublicIPFailStatus(s.db, id, now)
 			if err != nil {
 				err = fmt.Errorf("setting initial public IP fail status: %w", err)
-				errors = append(errors, err)
-				s.logger.Error(err.Error())
+				errors = s.appendUpdateError(errors, err)
 			}
 			continue
 		} else if updateIP.Is6() {
@@ -353,8 +359,7 @@ func (s *Service) updateNecessary(ctx context.Context) (errors []error) {
 		err := setInitialUpToDateStatus(s.db, id, updateIP, now)
 		if err != nil {
 			err = fmt.Errorf("setting initial up to date status: %w", err)
-			errors = append(errors, err)
-			s.logger.Error(err.Error())
+			errors = s.appendUpdateError(errors, err)
 		}
 	}
 	for id := range recordIDs {
@@ -367,8 +372,7 @@ func (s *Service) updateNecessary(ctx context.Context) (errors []error) {
 		s.logger.Info("Updating record " + record.Provider.String() + " to use " + updateIP.String())
 		err := s.updater.Update(ctx, id, updateIP)
 		if err != nil {
-			errors = append(errors, err)
-			s.logger.Error(err.Error())
+			errors = s.appendUpdateError(errors, err)
 		}
 	}
 
@@ -387,6 +391,21 @@ func (s *Service) updateNecessary(ctx context.Context) (errors []error) {
 
 func (s *Service) String() string {
 	return "updater"
+}
+
+// appendUpdateError logs err and appends it to errs, unless err is a
+// data.ErrRecordChanged error. Such an error only means the record was
+// reconfigured by a configuration reload while this update cycle was running,
+// so it is logged at debug level only and does not fail the cycle: the newly
+// configured record is handled by the next cycle.
+func (s *Service) appendUpdateError(errs []error, err error) []error {
+	if errors.Is(err, data.ErrRecordChanged) {
+		s.logger.Debug("Skipping record update result: " + err.Error())
+		return errs
+	}
+	s.logger.Error(err.Error())
+
+	return append(errs, err)
 }
 
 func (s *Service) Start(ctx context.Context) (runError <-chan error, startErr error) {

@@ -10,6 +10,7 @@ type errJSONWrapper struct {
 }
 
 func httpError(w http.ResponseWriter, status int, errString string) {
+	w.Header().Set("Content-Type", contentTypeJSON)
 	w.WriteHeader(status)
 	if errString == "" {
 		errString = http.StatusText(status)
@@ -26,6 +27,7 @@ type errorsJSONWrapper struct {
 }
 
 func httpErrors(w http.ResponseWriter, status int, errors []error) {
+	w.Header().Set("Content-Type", contentTypeJSON)
 	w.WriteHeader(status)
 
 	errs := make([]string, len(errors))

@@ -111,6 +111,8 @@ This readme and the [docs/](docs/) directory are **versioned** to match the prog
 
     ![Mobile Web UI](readme/webui-mobile.png)
 
+- 🆕 [Web configuration page](#web-ui-and-rest-api) to add, edit, duplicate and delete records from your browser, saved to `config.json` and applied without restarting
+- 🆕 [JSON REST API](#web-ui-and-rest-api) to read the records and manage the settings programmatically
 - Send notifications with [**Shoutrrr**](https://containrrr.dev/shoutrrr/v0.8/services/overview/) using `SHOUTRRR_ADDRESSES`
 - Container (Docker/K8s) specific features:
   - Lightweight 12MB Docker image based on the Scratch Docker image
@@ -287,6 +289,8 @@ Note that:
 - you can specify multiple owners/hosts for the same domain using a comma separated list. For example with `"domain": "example.com,sub.example.com,sub2.example.com",`.
 ⚠️ this is a bit different for DuckDNS and GoIP, see their respective documentation.
 
+💡 You do not have to hand-write this JSON: the [settings page](#settings-page) lets you add, edit and delete these settings from your browser, and the [REST API](#rest-api) lets you script it.
+
 ### Environment variables
 
 🆕 There are now flags equivalent for each variable below, for example `--log-level`.
@@ -373,6 +377,102 @@ If you have a host firewall in place, this container needs the following ports:
 - TCP 443 outbound for outbound HTTPS
 - UDP 53 outbound for outbound DNS resolution
 - TCP 8000 inbound (or other) for the WebUI
+
+## Web UI and REST API
+
+The web server is enabled by default (`SERVER_ENABLED=yes`) and listens on `LISTENING_ADDRESS` (`:8000`). All of its paths are served under `ROOT_URL` (`/` by default), so with the defaults the dashboard is at `http://localhost:8000/`.
+
+| Path | Description |
+| --- | --- |
+| `{ROOT_URL}/` | Records dashboard, refreshed every 10 seconds |
+| `{ROOT_URL}/settings` | 🆕 [Settings page](#settings-page), to manage the records |
+| `{ROOT_URL}/update` | Force an update cycle of all the records now |
+| `{ROOT_URL}/api/...` | 🆕 [JSON REST API](#rest-api) |
+
+### ⚠️ Security warning
+
+**The web UI and the API are unauthenticated.** There is no login, no API key, no token and no permission of any kind. Anyone who can open a TCP connection to `LISTENING_ADDRESS` can:
+
+- read your DNS provider credentials in clear text, from the settings page, from its raw JSON editor and from `GET {ROOT_URL}/api/settings`
+- add, change or delete records, and therefore repoint any domain you manage to an address of their choosing
+- trigger update cycles at will
+
+We recommend **not exposing the listening port to the public internet**, and more specifically:
+
+- binding it to a private interface or a loopback address, for example `LISTENING_ADDRESS=127.0.0.1:8000`, and reaching it over a VPN or an SSH tunnel
+- when it has to be reachable from elsewhere, running it **behind a reverse proxy that adds authentication**, and using `ROOT_URL` to mount the program under a subpath of the proxy
+
+### Settings page
+
+🆕 Your records can now be managed from your browser at `{ROOT_URL}/settings`, without editing any file and **without restarting the container**:
+
+- **Add record** opens a form with a provider picker and the credential fields of the selected provider, generated from the providers the program supports
+- **Edit** and **Delete** on each configured record, with a confirmation dialog before a deletion, and **Duplicate** to copy one into a new entry
+- a **Filter records** box appears above the list once you have more than 8 records, and matches on any part of an entry
+- a **Raw JSON** tab edits the whole `{"settings":[...]}` document, with a **Validate** button that checks it without saving, and a **Save all** button
+- entries are validated with the same code path as the program start, so a rejected entry is reported inline and never written
+- warnings found in the settings (for example a retro-compatible key) are shown at the top of the page and can be dismissed
+- a **Reload** button re-reads the settings file from disk without changing it
+- a dark/light theme toggle, remembered per browser
+
+Each change is written to the settings file (`CONFIG_FILEPATH`, `/updater/data/config.json` in the container) atomically, and hot-reloaded into the running updater **immediately**. There is no restart and no lost update cycle: the new records start being updated on the next cycle, and `GET {ROOT_URL}/update` forces one right away. If the new settings cannot be turned into DNS records, the file is rolled back to what it was and nothing changes.
+
+The page also shows the settings file path, the number of running records, and which configuration source is in effect (see below). JavaScript is required; without it the page tells you to edit the settings file directly.
+
+💡 The UI has no build step: it is plain HTML, CSS and JavaScript embedded in the binary. The pages load the [Tailwind](https://tailwindcss.com) browser build from `https://cdn.tailwindcss.com`, so the **browser** rendering the page needs outbound internet access to that CDN for the full styling. The bundled `static/styles.css` is a self-contained fallback for the same design, so the pages remain usable when the CDN is unreachable, for example on an air-gapped network.
+⚠️ The pages must be **served by the program**, never opened from a `file://` URL: a browser blocks the API requests of a local file, so the page would stay empty.
+
+### Configuration precedence and restart safety
+
+`config.json` and the `CONFIG` environment variable can both carry the settings. Now that the settings file can be edited at runtime, the program needs to know which one wins at start up, without clobbering what you just edited in the UI. It does so with a seed stored in the file itself, under the reserved `_env_seed` key: the hex SHA-256 of the `CONFIG` value the file was last synchronized from.
+
+The rules, applied at every start up and on every `POST {ROOT_URL}/api/reload`, refine the `CONFIG` row of the [environment variables table](#environment-variables):
+
+- **`CONFIG` is not set**: the settings file is the source of truth, so your UI edits are always used. If the file does not exist, an empty one is created.
+- **`CONFIG` is set and the file's `_env_seed` equals the SHA-256 of the `CONFIG` value**: the **file wins**. The environment variable has not changed since the file was last synchronized from it, so the file, including your UI edits, survives the restart.
+- **`CONFIG` is set and the seed differs, or the file has no `_env_seed` at all**: the **environment variable wins**. It is written to the file, stamping the new `_env_seed`, and used from there. A file with no seed is a file written before this feature existed, so the first start after upgrading gives `CONFIG` the priority once.
+
+In short: **change `CONFIG` in your compose file to take effect again, leave it alone and the settings file edited from the web UI stays authoritative.**
+
+`_env_seed` is a reserved key: never add it to your own configuration and never hand-edit it. Any value you put there makes the program believe `CONFIG` changed, so `CONFIG` wins again and overwrites your file. Any *other* top level key of the settings file is preserved when the program rewrites it, so a custom key you added survives an edit made through the UI.
+
+The settings page reports the state in effect: the settings file path, the number of running records, a `source: file` / `source: env` / `source: empty` badge and a `CONFIG: set` / `CONFIG: unset` badge, with a banner explaining what happens if you edit one or the other. `GET {ROOT_URL}/api/settings` returns the same information in its `source`, `env` and `filePath` fields.
+
+### REST API
+
+The same web server exposes a JSON REST API, which the web UI itself uses. 🆕 No new environment variable is needed to enable it, it is served whenever the web server is enabled.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `{ROOT_URL}/` | Records dashboard (HTML) |
+| `GET` | `{ROOT_URL}/settings` | Settings page (HTML) |
+| `GET` | `{ROOT_URL}/update` | Force an update cycle now, `202` on success |
+| `GET` | `{ROOT_URL}/static/*` | Static assets of the web UI |
+| `GET` | `{ROOT_URL}/api/providers` | Supported providers and the fields each one accepts |
+| `GET` | `{ROOT_URL}/api/settings` | Current settings entries and configuration source |
+| `POST` | `{ROOT_URL}/api/settings` | Add one settings entry, `201` on success |
+| `PUT` | `{ROOT_URL}/api/settings` | Replace all the settings entries |
+| `PUT` | `{ROOT_URL}/api/settings/{index}` | Replace the settings entry at `{index}` |
+| `DELETE` | `{ROOT_URL}/api/settings/{index}` | Delete the settings entry at `{index}` |
+| `POST` | `{ROOT_URL}/api/settings/validate` | Validate settings entries without saving them |
+| `POST` | `{ROOT_URL}/api/reload` | Re-read the settings file and apply it, without saving |
+| `GET` | `{ROOT_URL}/api/records` | The records and their last known status |
+
+All the mutating endpoints write the settings file and hot reload the running updater, without a restart. Request bodies must be sent as `Content-Type: application/json` and are limited to 1 MiB. Errors are always `{"errors":["..."]}`.
+
+```sh
+# add a record
+curl -sS -X POST http://localhost:8000/api/settings \
+  -H 'Content-Type: application/json' \
+  -d '{"provider":"duckdns","domain":"sub.duckdns.org","token":"00000000-0000-0000-0000-000000000000","ip_version":"ipv4"}'
+
+# and change it
+curl -sS -X PUT http://localhost:8000/api/settings/0 \
+  -H 'Content-Type: application/json' \
+  -d '{"provider":"duckdns","domain":"other.duckdns.org","token":"00000000-0000-0000-0000-000000000000","ip_version":"ipv4"}'
+```
+
+📖 See **[docs/api.md](docs/api.md)** for the full reference: every endpoint with its request and response shapes, the status codes, copy-pasteable `curl` examples and the hot reload semantics. ⚠️ Reminder: it is unauthenticated, as described above.
 
 ## Architecture
 

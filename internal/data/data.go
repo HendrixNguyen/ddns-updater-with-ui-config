@@ -13,10 +13,11 @@ type Database struct {
 	persistentDB PersistentDatabase
 }
 
-// NewDatabase creates a new in memory database.
+// NewDatabase creates a new in memory database. The records are copied, so
+// the caller keeps full ownership of the slice it passes in.
 func NewDatabase(data []records.Record, persistentDB PersistentDatabase) *Database {
 	return &Database{
-		data:         data,
+		data:         cloneRecords(data),
 		persistentDB: persistentDB,
 	}
 }

@@ -2,6 +2,7 @@ package records
 
 import (
 	"fmt"
+	"html"
 	"strings"
 	"time"
 
@@ -12,7 +13,16 @@ import (
 func (r *Record) HTML(now time.Time) models.HTMLRow {
 	const NotAvailable = "N/A"
 	row := r.Provider.HTML()
-	message := r.Message
+	// The index page is rendered with a text/template, which does not escape
+	// anything, and the only markup of a row is the one built here. The domain
+	// and the owner come straight from the user supplied settings, and the
+	// message from the provider API response, so they are HTML escaped. The
+	// Domain and Owner fields are rebuilt here rather than taken from the
+	// provider so that a single place escapes them for every provider.
+	domainName := html.EscapeString(r.Provider.BuildDomainName())
+	row.Domain = `<a href="http://` + domainName + `">` + domainName + `</a>`
+	row.Owner = html.EscapeString(r.Provider.Owner())
+	message := html.EscapeString(r.Message)
 	if r.Status == constants.UPTODATE {
 		message = "no IP change for " + r.History.GetDurationSinceSuccess(now)
 	}
