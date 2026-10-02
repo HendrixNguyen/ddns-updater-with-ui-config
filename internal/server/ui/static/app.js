@@ -132,6 +132,7 @@
     copy: ['M9 9h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V11a2 2 0 0 1 2-2Z', 'M5 15H4a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v1'],
     refresh: ['M21 12a9 9 0 1 1-2.6-6.4', 'M21 3v6h-6'],
     search: ['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z', 'm21 21-4.3-4.3'],
+    chevron: ['m6 9 6 6 6-6'],
     close: ['M18 6 6 18', 'm6 6 12 12'],
     empty: ['M4 7h16v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z', 'M4 7l2-3h12l2 3', 'M9 12h6'],
   };
@@ -233,10 +234,17 @@
 
   function initTheme() {
     applyTheme(isDark());
+    bindThemeToggle();
+  }
+
+  /* bindThemeToggle wires the header button, which on the settings page only
+   * exists after the shell is built, hence the separate call and the guard. */
+  function bindThemeToggle() {
     var toggle = byID('theme-toggle');
-    if (!toggle) {
+    if (!toggle || toggle.dataset.themeBound === 'true') {
       return;
     }
+    toggle.dataset.themeBound = 'true';
     toggle.addEventListener('click', function () {
       applyTheme(!isDark());
     });
@@ -716,7 +724,31 @@
       return cell('Previous IPs', [list, hiddenList, toggle]);
     }
 
-    function renderRecords(records) {
+    var MESSAGE_MAX_LENGTH = 180;
+
+  /* messageNode keeps a provider failure short enough not to blow up the row
+   * height. The full text is kept in the title attribute, as plain text. */
+  function messageNode(message) {
+    var full = String(message);
+    var display = full;
+    if (display.length > MESSAGE_MAX_LENGTH) {
+      var clipped = display.slice(0, MESSAGE_MAX_LENGTH);
+      var cut = clipped.lastIndexOf(' ');
+      if (cut > MESSAGE_MAX_LENGTH * 0.6) {
+        clipped = clipped.slice(0, cut);
+      }
+      display = clipped.replace(/[\s,;:.\-]+$/, '') + '…';
+    }
+    var node = el('div', {
+      class: 'help msg-clamp',
+      style: 'margin-top:0.25rem',
+      text: display,
+    });
+    node.title = full;
+    return node;
+  }
+
+  function renderRecords(records) {
       clear(body);
       records.forEach(function (record) {
         var domain = record.domain || '';
@@ -726,7 +758,7 @@
 
         var statusCell = cell('Status', [
           statusBadge(record.status),
-          message ? el('div', { class: 'help', style: 'margin-top:0.25rem', text: message }) : null,
+          message ? messageNode(message) : null,
         ]);
 
         var ipCell = cell('Current IP', [el('span', { class: 'ip-cell' }, [
@@ -870,6 +902,32 @@
   var COMMON_KEYS = ['provider', 'domain', 'owner', 'ip_version', 'ipv6_suffix', 'host', 'provider_ip'];
   var SECRET_KEY_PATTERN = /token|password|secret|key/i;
   var DOC_BASE_URL = 'https://github.com/qdm12/ddns-updater/blob/main/';
+  var IP_VERSION_DEFAULT = 'ipv4 or ipv6';
+  var IP_VERSION_VALUES = ['ipv4', 'ipv6', IP_VERSION_DEFAULT];
+  var IP_VERSION_EMPTY = '';
+
+  /* ipVersionLabel turns the raw server string into a human label, and turns
+   * a missing value into the "use the server default" wording. */
+  function ipVersionLabel(value) {
+    if (typeof value !== 'string' || value.trim() === '') {
+      return 'Default (IPv4 and IPv6)';
+    }
+    var normalized = value.trim().toLowerCase();
+    if (normalized === 'ipv4') {
+      return 'IPv4';
+    }
+    if (normalized === 'ipv6') {
+      return 'IPv6';
+    }
+    if (normalized === IP_VERSION_DEFAULT) {
+      return 'IPv4 and IPv6';
+    }
+    return value;
+  }
+
+  function isKnownIPVersion(value) {
+    return IP_VERSION_VALUES.indexOf(String(value).trim().toLowerCase()) !== -1;
+  }
 
   function initSettingsPage() {
     var app = byID('app');
@@ -924,7 +982,7 @@
       nodes.banner = el('section', { 'aria-label': 'Configuration source' });
       nodes.alerts = el('section', { 'aria-label': 'Configuration warnings' });
       nodes.listCard = el('section', { class: 'card', 'aria-labelledby': 'records-heading' });
-      nodes.jsonCard = el('section', { class: 'card', 'aria-labelledby': 'json-heading' });
+      nodes.jsonCard = el('section', { class: 'card', 'aria-labelledby': 'json-heading', hidden: true });
 
       buildEditor();
 
@@ -946,10 +1004,11 @@
       stack.appendChild(nodes.banner);
       stack.appendChild(nodes.alerts);
       stack.appendChild(nodes.formPanel);
-      stack.appendChild(nodes.jsonPanel);
+      stack.appendChild(nodes.jsonCard);
 
       app.appendChild(el('a', { class: 'sr-only', href: '#settings-main', text: 'Skip to content' }));
       app.appendChild(buildHeader('settings'));
+      bindThemeToggle();
       app.appendChild(main);
       app.appendChild(buildFooter());
       app.appendChild(el('div', { class: 'toast-region', id: 'toasts', 'aria-live': 'polite' }));
@@ -1029,7 +1088,6 @@
 
       nodes.formPanel = formPanel;
       nodes.jsonPanel = jsonPanel;
-      jsonPanel.insertBefore(nodes.jsonCard, jsonPanel.firstChild);
 
       var tabs = el('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Editing mode' }, [
         el('button', {
@@ -1095,6 +1153,7 @@
       var isForm = name === 'form';
       nodes.formPanel.hidden = !isForm;
       nodes.jsonPanel.hidden = isForm;
+      nodes.jsonCard.hidden = isForm;
       var formTab = nodes.tabs.querySelector('#tab-form');
       var jsonTab = nodes.tabs.querySelector('#tab-json');
       formTab.setAttribute('aria-selected', isForm ? 'true' : 'false');
@@ -1451,7 +1510,10 @@
             text: typeof entry.owner === 'string' && entry.owner ? entry.owner : 'derived',
           })]),
           el('td', { 'data-label': 'IP version' }, [el('span', {
-            text: typeof entry.ip_version === 'string' && entry.ip_version ? entry.ip_version : 'default',
+            title: typeof entry.ip_version === 'string' && entry.ip_version
+              ? String(entry.ip_version)
+              : 'not set, the server default applies',
+            text: ipVersionLabel(entry.ip_version),
           })]),
           summaryCell,
           actions,
@@ -1588,11 +1650,25 @@
         'aria-autocomplete': 'list',
         'aria-controls': 'entry-provider-list',
         placeholder: 'Search a provider…',
+        style: 'padding-right:2.25rem',
         onInput: function () {
+          openProviderList();
+        },
+        onClick: function () {
+          openProviderList();
+        },
+        onFocus: function () {
           openProviderList();
         },
         onKeydown: onProviderKey,
       });
+      /* The caret is pure decoration: its geometry, colour and the click
+       * pass-through all live in the `.combobox-caret` rule of styles.css,
+       * and only the open/closed rotation is toggled, via `is-open`. */
+      var providerCaret = el('span', {
+        class: 'combobox-caret',
+        'aria-hidden': 'true',
+      }, [icon(ICONS.chevron, { class: 'combobox-caret-icon', strokeWidth: 2 })]);
       var providerList = el('ul', {
         class: 'combobox-list',
         id: 'entry-provider-list',
@@ -1600,8 +1676,17 @@
         hidden: true,
         'aria-label': 'Providers',
       });
+      var providerBox = el('div', { class: 'combobox' }, [providerInput, providerCaret, providerList]);
       var filtered = [];
       var activeOption = -1;
+
+      function onDocumentPointerDown(event) {
+        if (!providerBox.contains(event.target)) {
+          closeProviderList();
+        }
+      }
+      document.addEventListener('mousedown', onDocumentPointerDown, true);
+      document.addEventListener('touchstart', onDocumentPointerDown, true);
 
       var domainInput = el('input', {
         class: 'input',
@@ -1636,13 +1721,14 @@
           scheduleValidation();
         },
       }, [
-        el('option', { value: 'ipv4or6', text: 'IPv4 or IPv6 (both)' }),
+        el('option', { value: IP_VERSION_EMPTY, text: 'Default (IPv4 and IPv6)' }),
+        el('option', { value: IP_VERSION_DEFAULT, text: 'IPv4 and IPv6' }),
         el('option', { value: 'ipv4', text: 'IPv4 only' }),
         el('option', { value: 'ipv6', text: 'IPv6 only' }),
       ]);
-      ipVersionSelect.value = ['ipv4', 'ipv6', 'ipv4or6'].indexOf(draft.ip_version) !== -1
-        ? draft.ip_version
-        : 'ipv4or6';
+      ipVersionSelect.value = isKnownIPVersion(draft.ip_version)
+        ? String(draft.ip_version).trim().toLowerCase()
+        : IP_VERSION_EMPTY;
 
       var suffixInput = el('input', {
         class: 'input',
@@ -1922,6 +2008,7 @@
         }
         providerList.hidden = false;
         providerInput.setAttribute('aria-expanded', 'true');
+        setCaretOpen(true);
       }
 
       function closeProviderList() {
@@ -1929,6 +2016,11 @@
         providerInput.setAttribute('aria-expanded', 'false');
         providerInput.removeAttribute('aria-activedescendant');
         activeOption = -1;
+        setCaretOpen(false);
+      }
+
+      function setCaretOpen(open) {
+        providerCaret.classList.toggle('is-open', open);
       }
 
       function setActiveOption(position) {
@@ -1996,7 +2088,12 @@
           result[key] = draft[key];
         });
         result.domain = domainInput.value.trim();
-        result.ip_version = ipVersionSelect.value;
+        var ipVersion = ipVersionSelect.value;
+        if (isKnownIPVersion(ipVersion)) {
+          result.ip_version = ipVersion;
+        } else {
+          delete result.ip_version;
+        }
         var owner = ownerInput.value.trim();
         if (owner) {
           result.owner = owner;
@@ -2123,7 +2220,7 @@
             document.createTextNode('Provider'),
             el('span', { class: 'req', 'aria-hidden': 'true', text: '*' }),
           ]),
-          el('div', { class: 'combobox' }, [providerInput, providerList]),
+          providerBox,
           el('p', { class: 'help', text: 'The DNS service holding the zone of the domain below.' }),
           providerLink,
         ]),
@@ -2201,6 +2298,8 @@
         body: body,
         footer: footer,
         onClose: function () {
+          document.removeEventListener('mousedown', onDocumentPointerDown, true);
+          document.removeEventListener('touchstart', onDocumentPointerDown, true);
           if (validationTimer) {
             window.clearTimeout(validationTimer);
             validationTimer = null;

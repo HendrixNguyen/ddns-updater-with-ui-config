@@ -28,6 +28,12 @@
   --accent-contrast: #ffffff;
   --accent-soft: rgba(99, 102, 241, 0.16);
   --accent-ring: rgba(99, 102, 241, 0.45);
+  /* `--accent` is tuned as a *fill* (white label on it is 4.47:1, just under
+   * AA). These two derived tokens keep that fill as the brand colour while
+   * giving text and fills their own AA compliant shade, so the inline
+   * `theme.extend.colors.accent` object in the templates stays untouched. */
+  --accent-text: #818cf8;  /* accent used as foreground: 6.67:1 on the page */
+  --accent-solid: #5b5aee; /* accent used as a fill under `--accent-contrast` */
 
   --success: #10b981;
   --success-soft: rgba(16, 185, 129, 0.16);
@@ -55,8 +61,14 @@
   --border: rgba(255, 255, 255, 0.09);
   --border-strong: rgba(255, 255, 255, 0.16);
   --text: #e7e7ea;
+  /* `--text-muted` and `--text-subtle` are the two secondary steps of the
+   * dark palette. `--text-subtle` is the smallest text in the UI (11px
+   * uppercase labels, table headers, the owner line, placeholders), so it
+   * needs the full 4.5:1 of WCAG AA: 5.26:1 on --surface, 4.95:1 on
+   * --surface-raised, 5.41:1 on --surface-inset. It is still a clear step
+   * below --text-muted (7.41:1) and --text (15.4:1). */
   --text-muted: #a1a1aa;
-  --text-subtle: #71717a;
+  --text-subtle: #86868f;
   --header-background: rgba(9, 9, 11, 0.72);
   --overlay: rgba(3, 3, 6, 0.72);
   --skeleton-base: rgba(255, 255, 255, 0.06);
@@ -95,16 +107,25 @@
   --accent-contrast: #ffffff;
   --accent-soft: rgba(79, 70, 229, 0.1);
   --accent-ring: rgba(79, 70, 229, 0.35);
+  /* On white the accent is already AA as text (5.88:1) and as a fill under
+   * white (6.29:1), so both derived tokens are the accent itself. */
+  --accent-text: #4f46e5;
+  --accent-solid: #4f46e5;
 
   --success: #059669;
   --success-soft: rgba(5, 150, 105, 0.12);
-  --success-text: #047857;
+  /* emerald 700 -> 800: the 700 shade drops to 4.35:1 once the 12% success
+   * tint is composited over --surface-inset (alerts) and to 4.26:1 over a
+   * white card. 800 clears AA in both places. */
+  --success-text: #065f46;
   --info: #0284c7;
   --info-soft: rgba(2, 132, 199, 0.12);
   --info-text: #0369a1;
   --warn: #b45309;
   --warn-soft: rgba(180, 83, 9, 0.12);
-  --warn-text: #b45309;
+  /* amber 700 -> 800: 700 is only 3.90:1 on the tinted --warn-soft surface
+   * used by `.badge-updating` and `.alert-warn`, 800 is 5.51:1. */
+  --warn-text: #92400e;
   --danger: #e11d48;
   --danger-soft: rgba(225, 29, 72, 0.12);
   --danger-text: #be123c;
@@ -185,7 +206,7 @@ p {
 }
 
 a {
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
   transition: color var(--duration) var(--ease);
 }
@@ -359,7 +380,7 @@ a:hover {
 
 .nav-link[aria-current="page"] {
   background-color: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .main {
@@ -485,7 +506,7 @@ a:hover {
 }
 
 .btn-primary {
-  background-color: var(--accent);
+  background-color: var(--accent-solid);
   border-color: transparent;
   color: var(--accent-contrast);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
@@ -721,6 +742,38 @@ details.advanced > .advanced-body {
   position: relative;
 }
 
+/* The decorative chevron of the provider combobox, built by app.js as
+ * `span.combobox-caret > svg.combobox-caret-icon`. Everything static lives
+ * here rather than in an inline `style` attribute so both palettes are driven
+ * by the existing custom properties: `--text-subtle` is redefined by `:root`
+ * and `:root.light`, so the caret follows the theme with no extra rule.
+ * `pointer-events: none` keeps the caret click-through, so clicking it still
+ * focuses and opens the text input underneath rather than being swallowed. */
+.combobox-caret {
+  position: absolute;
+  right: 0.625rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  pointer-events: none;
+  opacity: 0.65;
+  color: var(--text-subtle);
+  transition: transform var(--duration) var(--ease);
+}
+
+/* Closed state of the rotation is the 0deg in `transform` above; only the
+ * open state needs a rule. app.js toggles `is-open` on the span. */
+.combobox-caret.is-open {
+  transform: translateY(-50%) rotate(180deg);
+}
+
+.combobox-caret-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: 0 0 auto;
+}
+
 .combobox-list {
   position: absolute;
   z-index: 60;
@@ -750,7 +803,7 @@ details.advanced > .advanced-body {
 
 .combobox-option[aria-selected="true"] {
   background-color: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .combobox-option .mono {
@@ -813,6 +866,9 @@ details.advanced > .advanced-body {
   background-color: var(--surface-inset);
   color: var(--text-muted);
   border: 1px solid var(--border);
+  /* Status badges are short, but nothing stops a provider name or a chip
+   * from being long: never let one grow past its container. */
+  max-width: 100%;
 }
 
 .badge::before {
@@ -826,6 +882,23 @@ details.advanced > .advanced-body {
 
 .badge-plain::before {
   display: none;
+}
+
+/* Provider option chips (`key=value`, built by app.js) carry arbitrary user
+ * values, e.g. a cloudflare `zone_identifier` of 40 characters. They used to
+ * be `white-space: nowrap` inside a `flex-wrap: wrap` row, so they neither
+ * wrapped nor scrolled: the chip was simply clipped at the viewport edge.
+ * `overflow-wrap: anywhere` also lowers the min-content contribution, which is
+ * what lets the flex item shrink below its intrinsic text width; `min-width: 0`
+ * states that instead of relying on the automatic minimum size. A wrapped chip
+ * keeps the 999px radius, which CSS clamps proportionally into a tidy rounded
+ * rectangle. */
+.badge-plain {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .badge-success {
@@ -865,7 +938,7 @@ details.advanced > .advanced-body {
 
 .badge-accent {
   background-color: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: transparent;
 }
 
@@ -929,6 +1002,14 @@ details.advanced > .advanced-body {
   vertical-align: top;
 }
 
+/* Domains, owners and provider messages are user supplied and can be much
+ * wider than the viewport. Letting them break anywhere keeps the table (and,
+ * below 900px, the stacked card layout) inside the page instead of forcing a
+ * horizontal scroll. `.truncate` cells keep their own nowrap. */
+.table td {
+  overflow-wrap: anywhere;
+}
+
 .table thead th {
   font-size: 0.6875rem;
   font-weight: 600;
@@ -990,6 +1071,29 @@ details.advanced > .advanced-body {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+
+/* Long provider failure blobs (the message cell of the records table, built by
+ * app.js as `div.help.msg-clamp`) would otherwise stretch a row to ~124px.
+ * Clamp to two lines with an ellipsis; app.js keeps the full text in `title`.
+ * `-webkit-line-clamp` is what WebKit based engines honour today, and it
+ * requires `display: -webkit-box` plus a vertical box orient; `line-clamp` is
+ * the standard spelling for the other engines. The rule is self contained, so
+ * it is simply inert on a page where no such cell exists.
+ *
+ * `max-width` is what makes the clamp engage: without it the auto table layout
+ * sizes the column to the full message and the text is never clipped. In the
+ * mobile card layout (max-width: 900px) the cell is a flex item, so `min-width: 0`
+ * lets it shrink instead of pushing the card wider than the viewport. */
+.msg-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  max-width: 34ch;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* Responsive table: below md each row becomes a stacked definition card,
@@ -1056,6 +1160,30 @@ details.advanced > .advanced-body {
 
   .table td.actions::before {
     content: none;
+  }
+
+  /* A cell holding both a status badge and a clamped message has three flex
+   * items (the injected data-label, the badge, the message) sharing one line,
+   * which squeezes the message into a ~5 character column. Let that cell wrap
+   * and give the message a full line of its own.
+
+   * `:has()` is only used to *recognise* the cell, never to lay the page out,
+   * so the browser floor is cosmetic-only: Chromium 105+, Safari 15.4+ and
+   * Firefox 121+. An older engine drops both rules as a whole (an unsupported
+   * selector invalidates its rule, it does not leak `flex-wrap: wrap`), and
+   * the stacked card layout below is otherwise untouched. The page therefore
+   * needs no polyfill and no `@supports` guard; the only loss on those engines
+   * is that the clamped message shares the badge's line instead of taking a
+   * full one of its own. Verified at 390x844 in Chromium by serving this file
+   * with both `:has()` rules removed: zero horizontal overflow, zero console
+   * errors, and the two line clamp still in force. */
+  .table td:has(> .msg-clamp) {
+    flex-wrap: wrap;
+  }
+
+  .table td:has(> .msg-clamp) > .msg-clamp {
+    flex: 1 1 100%;
+    max-width: 100%;
   }
 }
 
