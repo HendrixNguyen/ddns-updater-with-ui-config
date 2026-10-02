@@ -2527,10 +2527,9 @@
 
   /* ------------------------------------------------------------------ boot */
 
-  /* keepStylesheetLast makes sure the offline baseline stays the last
-   * stylesheet of the document: the Tailwind browser build injects its own
-   * <style> element in <head> at runtime, which would otherwise come after
-   * ours and win specificity ties. */
+  /* keepStylesheetLast makes sure the bundled stylesheet stays the last
+   * stylesheet of the document: anything injected later would come after it
+   * and win specificity ties. */
   function keepStylesheetLast() {
     var link = byID('ddns-styles');
     if (link && link.parentNode) {

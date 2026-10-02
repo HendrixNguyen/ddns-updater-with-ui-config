@@ -1,28 +1,20 @@
 /* DDNS Updater web UI stylesheet.
  *
- * TWO LAYERS, ONE RESULT.
- *   1. The rich layer is the Tailwind browser build (Play CDN v3), configured
- *      inline in each page <head>. It is the source of truth for layout and
- *      for the fine grained utilities.
- *   2. THIS FILE is the offline baseline. The Play CDN needs the browser to
- *      reach a CDN; in an air gapped container it never loads. Everything
- *      below is hand written, dependency free CSS that approximates the very
- *      same design: same palette (CSS custom properties mirroring the Tailwind
- *      `theme.extend.colors` object), same spacing rhythm, same components.
+ * ONE SELF CONTAINED FILE, NO EXTERNAL RESOURCE.
+ *   Everything the pages need is below: the full palette, the spacing rhythm
+ *   and every component. The markup uses the semantic component classes
+ *   (`.card`, `.btn`, `.badge`, ...) rather than utility classes, so this
+ *   file is the only stylesheet either page loads.
  *
- * Both pages load this file AFTER the CDN script and the inline Tailwind
- * config, so where the two overlap this file wins. It never fights the
- * Tailwind layer: Tailwind utilities are single purpose and the rules below
- * target component classes (`.card`, `.btn`, `.badge`, ...) rather than
- * re-implementing utilities. The Tailwind layer is the rich layer, this file
- * is the floor the page must never fall below.
+ * Both pages load this file with no other stylesheet of any kind, which is
+ * what makes the design identical online and on an air gapped network: the
+ * browser only ever talks to the program itself.
  */
 
 /* ------------------------------------------------------------------ tokens */
 
 :root {
-  /* Accent (indigo 600-ish), semantic colours and neutral surfaces.
-   * Mirrors `tailwind.config` -> theme.extend.colors. */
+  /* Accent (indigo 600-ish), semantic colours and neutral surfaces. */
   --accent: #6366f1;
   --accent-hover: #4f46e5;
   --accent-contrast: #ffffff;
@@ -30,8 +22,7 @@
   --accent-ring: rgba(99, 102, 241, 0.45);
   /* `--accent` is tuned as a *fill* (white label on it is 4.47:1, just under
    * AA). These two derived tokens keep that fill as the brand colour while
-   * giving text and fills their own AA compliant shade, so the inline
-   * `theme.extend.colors.accent` object in the templates stays untouched. */
+   * giving text and fills their own AA compliant shade. */
   --accent-text: #818cf8;  /* accent used as foreground: 6.67:1 on the page */
   --accent-solid: #5b5aee; /* accent used as a fill under `--accent-contrast` */
 
@@ -1470,6 +1461,10 @@ details.advanced > .advanced-body {
 }
 
 .github-icon {
+  /* display:block replaces Tailwind's preflight rule of the same name, which the
+   * CDN previously supplied. Without it this inline SVG sits on the text
+   * baseline and the footer grows by ~7px. */
+  display: block;
   vertical-align: text-bottom;
   fill: currentColor;
   height: 1.15em;

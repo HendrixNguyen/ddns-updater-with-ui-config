@@ -419,7 +419,7 @@ Each change is written to the settings file (`CONFIG_FILEPATH`, `/updater/data/c
 
 The page also shows the settings file path, the number of running records, and which configuration source is in effect (see below). JavaScript is required; without it the page tells you to edit the settings file directly.
 
-💡 The UI has no build step: it is plain HTML, CSS and JavaScript embedded in the binary. The pages load the [Tailwind](https://tailwindcss.com) browser build from `https://cdn.tailwindcss.com`, so the **browser** rendering the page needs outbound internet access to that CDN for the full styling. The bundled `static/styles.css` is a self-contained fallback for the same design, so the pages remain usable when the CDN is unreachable, for example on an air-gapped network.
+💡 The UI has no build step: it is plain HTML, CSS and JavaScript embedded in the binary, and the pages load **no external resource at all**. The whole design lives in the bundled `static/styles.css`, so the pages render identically online and fully offline, including on an air-gapped network: the browser only ever talks to the program itself.
 ⚠️ The pages must be **served by the program**, never opened from a `file://` URL: a browser blocks the API requests of a local file, so the page would stay empty.
 
 ### Configuration precedence and restart safety
